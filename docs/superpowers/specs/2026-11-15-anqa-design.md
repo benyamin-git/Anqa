@@ -129,7 +129,7 @@ These are recommendations made because the user did not express a preference. Th
 | A11 | The bots directory is mounted read-only; `/data` is writable. | The dashboard only reads source and secrets; it writes only the token and app state. | assumed | recommendation |
 | A12 | The dashboard's own compose service uses `restart: unless-stopped`, `init: true`, `security_opt: no-new-privileges:true`, a read-only root filesystem, and a writable `/data` mount. | Standard container hardening without affecting bot containers. | assumed | recommendation |
 | A13 | The published image is a distroless static image with a musl-built binary and a `healthcheck` subcommand used by Docker HEALTHCHECK. | Small attack surface and a tiny image with a working health check. | assumed | recommendation |
-| A14 | Orphan cleanup runs only when the bots root is readable and the `.anqa-volume` sentinel exists; the app creates the sentinel on first sight of a readable volume and skips cleanup that run. | Prevents a missing or freshly mounted volume from removing every bot. | assumed | recommendation |
+| A14 | Orphan cleanup runs only when the bots root is readable and the sentinel at `/data/.anqa-volume` matches the bots root's Unix `dev:ino`; the app writes the sentinel on first sight or a changed root and skips cleanup that run. | Prevents a missing or freshly mounted volume from removing every bot; `/bots` stays read-only. | assumed | recommendation |
 | A15 | If Docker is unreachable, the app still serves the login page and returns a clear 503 with an error banner; it reconnects on later requests. | The dashboard should explain the failure instead of failing to start. | assumed | recommendation |
 | A16 | Operations are serialised per bot; a second action returns 409 while one is in progress. The UI disables the relevant controls. | Prevents build/start/stop races without a global lock. | assumed | recommendation |
 | A17 | Discovery is top-level only; hidden entries and symlinks are ignored; a directory qualifies with a `Dockerfile` or `bot.toml`; sorted by directory name. | Predictable scanning and no path-escape surprises. | assumed | recommendation |
@@ -172,13 +172,13 @@ One page after login, plus a token login screen and a settings dialog.
    - One immediate child directory per bot.
    - Contains source, `Dockerfile`, optional `bot.toml`, optional `.env`.
 4. **Data volume (`/data`, read-write)**
-   - `/data/token` is the only persistent Anqa state.
+   - `/data/token` and `/data/.anqa-volume` are the persistent Anqa files.
 5. **Browser**
    - Static SPA; polls the JSON API and renders cards.
 
 ### Data flow
 
-1. **Startup:** read env; ensure `/data` is writable; load or generate the token; connect to Docker; ensure `/bots` is readable; create the `.anqa-volume` sentinel if needed; run guarded orphan cleanup; start the HTTP server.
+1. **Startup:** read env; ensure `/data` is writable; load or generate the token; connect to Docker; ensure `/bots` is readable; create the `/data/.anqa-volume` sentinel if needed; run guarded orphan cleanup; start the HTTP server.
 2. **`GET /api/bots`:** authenticate; scan bot directories; list Anqa-managed containers; inspect them; merge directory data, Docker state, health, uptime, autostart, and in-memory operation state; return JSON.
 3. **Start:** authenticate; resolve the bot; take its per-bot lock; build the image if the bot uses a Dockerfile; ensure or recreate the container; start it; release the lock; return the operation result.
 4. **Stop:** authenticate; take the lock; stop the container with a 10-second grace period; release; return.
@@ -297,7 +297,7 @@ Status values: `running`, `stopped`, `starting`, `restarting`, `unhealthy`, `err
 ### Persistence and state
 
 - Docker is the source of truth for images, containers, restart policies, health, and named volumes.
-- `/data/token` is the only persistent Anqa file.
+- `/data/token` and `/data/.anqa-volume` are the only persistent Anqa files.
 - No database, no JSON state file, no session store.
 - In-memory state is limited to per-bot operation progress and the last error; it is lost on dashboard restart, which is acceptable.
 - Named volumes survive dashboard restarts, bot container recreation, and bot directory removal.
@@ -371,10 +371,10 @@ bots/
 - Dashboard URL: `http://192.168.1.100:7409`.
 - `anqa: 7409` is added under `Personal Projects` in `/srv/stacks/dashboard/html/config.yaml`.
 - Compose maps `7409:7409`, mounts `./bots:/bots:ro`, `./data:/data`, and `/var/run/docker.sock:/var/run/docker.sock`.
-- Compose sets `user: "${UID:-1000}:${GID:-1000}"` and `group_add: ["${DOCKER_GID:-988}"]`; this host's Docker GID is 988.
+- Compose sets `user: "${ANQA_UID:-1000}:${ANQA_GID:-1000}"` and `group_add: ["${DOCKER_GID:-988}"]`; this host's Docker GID is 988.
 - The dashboard service uses `restart: unless-stopped`, `init: true`, `read_only: true`, `security_opt: ["no-new-privileges:true"]`, and a writable `/data` mount.
 - `compose.yaml` uses the published GHCR image; `compose.dev.yaml` builds the local source.
-- Setup: `mkdir -p data bots`, create `.env` with `DOCKER_GID`, `UID`, `GID`, and optional `ANQA_PORT`, then `docker compose up -d`.
+- Setup: `mkdir -p data bots`, create `.env` with `ANQA_UID`, `ANQA_GID`, `DOCKER_GID`, and optional `ANQA_PORT`, then `docker compose up -d`.
 - First login: read `data/token` or the one-time container log line.
 - Update: change the pinned image tag or pull a new tag, then `docker compose up -d`.
 - Rollback: pin the previous image tag and `docker compose up -d`; named volumes remain untouched.
@@ -413,8 +413,8 @@ bots/
 | Build context handling differs from Docker CLI | Implement and test `.dockerignore` semantics; exclude `.env` and `.git`; integration tests with nested paths and ignores. |
 | Rebuilding every Start is slow for large bots | Docker layer cache; `.dockerignore`; small Telegram bots; document the tradeoff. |
 | Docker API/version changes | Use bollard's negotiated API; pin the crate; integration tests against Docker 29; CI on the runner's Docker. |
-| UID/GID and socket GID differ per host | Compose exposes `UID`, `GID`, `DOCKER_GID`; docs show `stat -c '%g' /var/run/docker.sock`; defaults for this host. |
-| Orphan cleanup removes a container accidentally | `.anqa-volume` sentinel; skip if the bots root is unreadable or freshly mounted; named volumes are never removed; log every cleanup. |
+| UID/GID and socket GID differ per host | Compose exposes `ANQA_UID`, `ANQA_GID`, `DOCKER_GID`; docs show `stat -c '%g' /var/run/docker.sock`; defaults for this host. |
+| Orphan cleanup removes a container accidentally | `/data/.anqa-volume` sentinel; skip if the bots root is unreadable or freshly mounted; named volumes are never removed; log every cleanup. |
 | Named volumes are less discoverable than a data folder | Document `docker volume ls`, labels, backup, and restore; the UI shows declared volumes on the card/API. |
 | Token lost or leaked | Stored at `data/token`; delete and restart to rotate; `ANQA_TOKEN` for automation; logout clears the cookie; changing the token invalidates sessions. |
 | First-run token is hard to find | Printed once in logs; also written to the bind-mounted `data/token`; README quickstart shows both. |
