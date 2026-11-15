@@ -1,5 +1,7 @@
+pub mod context;
 pub mod status;
 
+pub use context::{ContextError, build_context};
 pub use status::{BotStatus, ContainerView, HealthStatus, from_inspect, uptime_seconds};
 
 use bollard::API_DEFAULT_VERSION;
