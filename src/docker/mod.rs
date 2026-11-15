@@ -1,6 +1,8 @@
+pub mod build;
 pub mod context;
 pub mod status;
 
+pub use build::{BuildError, build_dockerfile, ensure_image, pull_image, split_image_ref};
 pub use context::{ContextError, build_context};
 pub use status::{BotStatus, ContainerView, HealthStatus, from_inspect, uptime_seconds};
 
@@ -97,7 +99,7 @@ impl DockerClient {
         }
     }
 
-    async fn client(&self) -> Result<Docker, DockerError> {
+    pub(crate) async fn client(&self) -> Result<Docker, DockerError> {
         if let Some(client) = self.inner.read().await.clone() {
             return Ok(client);
         }
@@ -126,7 +128,7 @@ pub enum DockerError {
     Api { message: String },
 }
 
-fn map_bollard_error(error: BollardError) -> DockerError {
+pub(crate) fn map_bollard_error(error: BollardError) -> DockerError {
     match error {
         BollardError::DockerResponseServerError {
             status_code: 409,

@@ -101,6 +101,7 @@ pub fn load_bot(root: &Path, dir: &str) -> Result<ResolvedBot, BotError> {
         ports,
         volumes,
         config_hash,
+        root: root.to_path_buf(),
     })
 }
 

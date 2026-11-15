@@ -59,6 +59,7 @@ pub struct ResolvedBot {
     pub ports: Vec<PortSpec>,
     pub volumes: Vec<VolumeSpec>,
     pub config_hash: String,
+    pub(crate) root: PathBuf,
 }
 
 #[derive(Debug, thiserror::Error)]
