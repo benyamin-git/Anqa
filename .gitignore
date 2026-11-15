@@ -1,0 +1,7 @@
+/target
+/data
+/bots
+/dev-data
+/dev-bots
+.env
+.ai-state
