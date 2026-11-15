@@ -1,4 +1,5 @@
 pub mod auth;
+pub mod bots;
 pub mod config;
 pub mod healthcheck;
 
