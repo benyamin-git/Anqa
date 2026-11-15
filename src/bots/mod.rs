@@ -1,6 +1,8 @@
+pub mod discovery;
 pub mod manifest;
 pub mod slug;
 
+pub use discovery::{BotErrorCard, Discovery, ScanError, scan};
 pub use manifest::load_bot;
 pub use slug::slugify;
 
