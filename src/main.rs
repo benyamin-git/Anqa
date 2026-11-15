@@ -15,7 +15,15 @@ fn main() -> ExitCode {
 }
 
 fn run() -> anyhow::Result<()> {
-    let _config = anqa::config::Config::from_env()?;
-    println!("anqa {}", anqa::version());
+    init_tracing();
+    let config = anqa::config::Config::from_env()?;
+    let _auth = anqa::auth::Auth::load(&config)?;
+    tracing::info!(version = anqa::version(), "anqa is ready");
     Ok(())
+}
+
+fn init_tracing() {
+    let filter = tracing_subscriber::EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("anqa=info"));
+    tracing_subscriber::fmt().with_env_filter(filter).init();
 }
