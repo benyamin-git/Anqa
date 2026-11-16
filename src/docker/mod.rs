@@ -1,9 +1,11 @@
 pub mod build;
+pub mod cleanup;
 pub mod context;
 pub mod lifecycle;
 pub mod status;
 
 pub use build::{BuildError, build_dockerfile, ensure_image, pull_image, split_image_ref};
+pub use cleanup::{CleanupError, CleanupReport, ensure_orphan_cleanup};
 pub use context::{ContextError, build_context};
 pub use lifecycle::{
     LifecycleError, container_name, set_autostart, set_restart_policy, start_bot, stop_bot,
