@@ -1,8 +1,12 @@
+pub mod api;
+pub mod assets;
 pub mod auth;
 pub mod bots;
 pub mod config;
 pub mod docker;
+pub mod error;
 pub mod healthcheck;
+pub mod state;
 
 pub use docker::cleanup::{CleanupError, CleanupReport, ensure_orphan_cleanup};
 pub use docker::lifecycle::{
