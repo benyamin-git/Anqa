@@ -661,7 +661,7 @@ mod tests {
         assert_eq!(status, StatusCode::OK);
         assert_eq!(
             body_json(&body),
-            json!({ "status": "ok", "version": "0.1.0" })
+            json!({ "status": "ok", "version": "0.1.1" })
         );
         assert_eq!(headers.get(header::CACHE_CONTROL).unwrap(), "no-cache");
         assert_eq!(

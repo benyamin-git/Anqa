@@ -2,7 +2,7 @@
 
 Anqa is a Rust dashboard that manages Telegram bots as one Docker container per
 bot directory. Project root: `~/dev/anqa`. The binary and image are `anqa`;
-the public version is `v0.1.0`.
+the public version is `v0.1.1`.
 
 ## Commands
 
