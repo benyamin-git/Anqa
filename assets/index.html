@@ -3,11 +3,184 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="light dark">
     <title>Anqa</title>
+    <script src="/assets/theme.js"></script>
+    <link rel="stylesheet" href="/assets/app.css">
+    <script src="/assets/app.js" defer></script>
   </head>
   <body>
-    <main>
-      <h1>ANQA</h1>
+    <noscript>
+      <p class="noscript-banner">Anqa needs JavaScript to show the dashboard.</p>
+    </noscript>
+
+    <main id="login-view" class="login-shell" aria-labelledby="login-title">
+      <section class="login-card">
+        <p class="wordmark">ANQA</p>
+        <h1 id="login-title">Sign in</h1>
+        <p id="login-hint" class="login-hint">
+          Use the dashboard token from <code>data/token</code> or the logs shown
+          when the container first starts.
+        </p>
+        <form id="login-form" novalidate>
+          <div class="field">
+            <label for="token">Dashboard token</label>
+            <input
+              id="token"
+              name="token"
+              type="password"
+              autocomplete="current-password"
+              autocapitalize="none"
+              autocorrect="off"
+              spellcheck="false"
+              aria-describedby="login-hint"
+              required
+            >
+          </div>
+          <p id="login-error" class="form-error" role="alert" hidden></p>
+          <button id="login-submit" class="button button-primary" type="submit">
+            Sign in
+          </button>
+        </form>
+      </section>
     </main>
+
+    <div id="dashboard-view" class="app-shell" hidden>
+      <a class="skip-link" href="#main-content">Skip to dashboard</a>
+
+      <header class="topbar">
+        <div class="topbar-inner">
+          <p class="wordmark">ANQA</p>
+          <p id="summary" class="summary" aria-live="polite">Loading bots…</p>
+          <nav class="topbar-actions" aria-label="Dashboard actions">
+            <button id="refresh-button" class="button button-text" type="button">
+              Refresh
+            </button>
+            <button id="settings-button" class="button button-text" type="button">
+              Settings
+            </button>
+            <button id="logout-button" class="button button-text" type="button">
+              Log out
+            </button>
+          </nav>
+        </div>
+      </header>
+
+      <main id="main-content" class="main" tabindex="-1">
+        <div id="banner" class="banner" role="alert" hidden>
+          <p id="banner-message"></p>
+          <button id="banner-retry" class="button button-tonal" type="button">
+            Retry
+          </button>
+        </div>
+
+        <h1 class="visually-hidden">Bots</h1>
+        <p id="status-announcer" class="visually-hidden" role="status"></p>
+
+        <div id="loading-state">
+          <p class="loading-label" aria-live="polite">Loading bots…</p>
+          <ul class="loading-state" aria-hidden="true">
+            <li class="skeleton-card">
+              <div class="skeleton-line"></div>
+              <div class="skeleton-line"></div>
+              <div class="skeleton-line"></div>
+            </li>
+            <li class="skeleton-card">
+              <div class="skeleton-line"></div>
+              <div class="skeleton-line"></div>
+              <div class="skeleton-line"></div>
+            </li>
+            <li class="skeleton-card">
+              <div class="skeleton-line"></div>
+              <div class="skeleton-line"></div>
+              <div class="skeleton-line"></div>
+            </li>
+          </ul>
+        </div>
+
+        <section id="empty-state" class="state-card" hidden>
+          <h2>No bots yet</h2>
+          <p>
+            Add a directory to the read-only bots volume. A directory becomes a
+            bot when it contains a <code>Dockerfile</code> or a
+            <code>bot.toml</code>.
+          </p>
+          <pre class="contract"><code>bots/
+  echo-bot/
+    Dockerfile
+    bot.toml       # optional
+    .env           # optional</code></pre>
+        </section>
+
+        <ul id="bot-grid" class="bot-grid"></ul>
+      </main>
+    </div>
+
+    <dialog
+      id="settings-dialog"
+      class="settings-dialog"
+      aria-labelledby="settings-title"
+    >
+      <form id="settings-form" class="settings-form" method="dialog">
+        <div class="settings-header">
+          <h2 id="settings-title">Settings</h2>
+          <button
+            id="settings-close"
+            class="button button-text"
+            type="button"
+            aria-label="Close settings"
+          >
+            Close
+          </button>
+        </div>
+
+        <fieldset class="settings-group">
+          <legend>Theme</legend>
+          <label class="settings-option">
+            <input type="radio" name="theme" value="light">
+            <span class="settings-option-text">
+              <span>Light</span>
+              <span>Bright surfaces</span>
+            </span>
+          </label>
+          <label class="settings-option">
+            <input type="radio" name="theme" value="dark">
+            <span class="settings-option-text">
+              <span>Dark</span>
+              <span>Charcoal surfaces</span>
+            </span>
+          </label>
+          <label class="settings-option">
+            <input type="radio" name="theme" value="oled">
+            <span class="settings-option-text">
+              <span>OLED</span>
+              <span>True-black surfaces</span>
+            </span>
+          </label>
+        </fieldset>
+
+        <fieldset class="settings-group">
+          <legend>Accent</legend>
+          <label class="settings-option">
+            <input type="radio" name="accent" value="blue">
+            <span class="settings-option-text">
+              <span>Telegram blue</span>
+              <span>Default accent</span>
+            </span>
+          </label>
+          <label class="settings-option">
+            <input type="radio" name="accent" value="orange">
+            <span class="settings-option-text">
+              <span>Rust orange</span>
+              <span>Warm accent</span>
+            </span>
+          </label>
+        </fieldset>
+
+        <div class="settings-actions">
+          <button class="button button-primary" type="submit">Done</button>
+        </div>
+      </form>
+    </dialog>
   </body>
 </html>
