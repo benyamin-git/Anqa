@@ -1,0 +1,16 @@
+target
+.git
+.github
+docs
+tests
+examples
+dev-bots
+dev-data
+bots
+data
+compose*.yaml
+.env
+.env.*
+.ai-state
+.superpowers
+*.md

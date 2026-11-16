@@ -1,0 +1,21 @@
+services:
+  anqa:
+    image: ghcr.io/benyamin-git/anqa:v0.1.0
+    restart: unless-stopped
+    init: true
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    user: "${ANQA_UID:-1000}:${ANQA_GID:-1000}"
+    group_add:
+      - "${DOCKER_GID:-988}"
+    ports:
+      - "${ANQA_PORT:-7409}:${ANQA_PORT:-7409}"
+    environment:
+      ANQA_PORT: "${ANQA_PORT:-7409}"
+      ANQA_SECURE_COOKIE: "${ANQA_SECURE_COOKIE:-}"
+      ANQA_TOKEN: "${ANQA_TOKEN:-}"
+    volumes:
+      - ./bots:/bots:ro
+      - ./data:/data
+      - /var/run/docker.sock:/var/run/docker.sock:ro
