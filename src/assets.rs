@@ -37,10 +37,15 @@ mod tests {
         let index = text("index.html");
         assert!(index.contains("<p class=\"wordmark\">ANQA</p>"));
         assert!(index.contains("id=\"login-form\""));
+        assert!(index.contains("id=\"token\""));
+        assert!(index.contains("id=\"login-error\""));
         assert!(index.contains("id=\"bot-grid\""));
         assert!(index.contains("id=\"settings-dialog\""));
         assert!(index.contains("id=\"banner\""));
+        assert!(index.contains("id=\"banner-retry\""));
         assert!(index.contains("id=\"empty-state\""));
+        assert!(index.contains("id=\"status-announcer\""));
+        assert!(index.contains("id=\"main-content\""));
 
         for path in ["app.css", "theme.js", "app.js", "fonts/OFL.txt"] {
             assert!(file(path).is_some(), "missing embedded asset {path}");
@@ -119,6 +124,31 @@ mod tests {
         assert!(!css.contains("gradient"));
         assert!(!css.contains("left:"));
         assert!(!css.contains("right:"));
+        assert!(css.contains("prefers-reduced-motion: reduce"));
+        assert!(css.contains(".bot-heading"));
+        assert!(css.contains(".status-chip {"));
+    }
+
+    #[test]
+    fn app_script_implements_the_spa_contract() {
+        let script = text("app.js");
+        assert!(script.contains("var POLL_MS = 2000;"));
+        assert!(script.contains("fetch("));
+        assert!(script.contains("/api/login"));
+        assert!(script.contains("/api/logout"));
+        assert!(script.contains("/api/bots"));
+        assert!(script.contains("/autostart"));
+        assert!(script.contains("Content-Type"));
+        assert!(script.contains("visibilitychange"));
+        assert!(script.contains("aria-busy"));
+        assert!(script.contains("formatUptime"));
+        assert!(script.contains("textContent"));
+        assert!(script.contains("showModal"));
+        assert!(!script.contains("innerHTML"));
+        assert!(!script.contains("outerHTML"));
+        assert!(!script.contains("insertAdjacentHTML"));
+        assert!(!script.contains("document.write"));
+        assert!(!script.contains("onclick="));
     }
 
     #[test]
