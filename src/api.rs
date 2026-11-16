@@ -4,15 +4,24 @@ use axum::extract::{DefaultBodyLimit, Path, Request, State};
 use axum::http::{HeaderValue, Method, StatusCode, header};
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
-use axum::routing::{get, post};
+use axum::routing::{get, post, put};
 use axum::{Json, Router};
+use bollard::models::ContainerInspectResponse;
 use serde::Deserialize;
 use serde_json::json;
+use std::collections::HashMap;
+use std::path::Path as StdPath;
 use std::time::Instant;
 
 use crate::assets;
+use crate::bots::{BotErrorCard, BotSource, BotView, Discovery, ResolvedBot, scan, slugify};
+use crate::docker::status::{BotStatus, ContainerView, from_inspect};
+use crate::docker::{
+    DockerError, LifecycleError, container_name, set_autostart, set_restart_policy, start_bot,
+    stop_container,
+};
 use crate::error::ApiError;
-use crate::state::AppState;
+use crate::state::{AppState, BotOpSnapshot, BotPhase, OperationGuard};
 
 const BODY_LIMIT: usize = 16 * 1024;
 
@@ -21,6 +30,10 @@ const CSP: &str = "default-src 'self'; base-uri 'none'; form-action 'self'; fram
 pub fn router(state: AppState) -> Router {
     let protected = Router::new()
         .route("/api/logout", post(logout))
+        .route("/api/bots", get(list_bots))
+        .route("/api/bots/{dir}/start", post(start_bot_route))
+        .route("/api/bots/{dir}/stop", post(stop_bot_route))
+        .route("/api/bots/{dir}/autostart", put(set_autostart_route))
         .route_layer(middleware::from_fn_with_state(state.clone(), require_auth));
 
     Router::new()
@@ -42,13 +55,300 @@ struct LoginRequest {
     token: String,
 }
 
+#[derive(Deserialize)]
+struct AutostartRequest {
+    enabled: bool,
+}
+
+struct MutationTarget {
+    slug: String,
+    bot: Option<ResolvedBot>,
+}
+
+async fn list_bots(State(state): State<AppState>) -> Result<Json<serde_json::Value>, ApiError> {
+    let Discovery { bots, errors } = scan(&state.config.bots_dir).map_err(|error| {
+        tracing::warn!(%error, "cannot scan the bots directory");
+        ApiError::bots_unavailable()
+    })?;
+
+    let containers = state.docker.list_managed().await.map_err(|error| {
+        tracing::warn!(%error, "cannot list managed containers");
+        ApiError::docker_unavailable()
+    })?;
+
+    let mut container_ids = HashMap::new();
+    for container in containers {
+        let label = container
+            .labels
+            .as_ref()
+            .and_then(|labels| labels.get("anqa.bot"))
+            .cloned();
+        let id = container.id.clone().or_else(|| {
+            container.names.as_ref().and_then(|names| {
+                names
+                    .first()
+                    .map(|name| name.trim_start_matches('/').to_string())
+            })
+        });
+        if let (Some(label), Some(id)) = (label, id) {
+            container_ids.entry(label).or_insert(id);
+        }
+    }
+
+    let mut views = Vec::with_capacity(bots.len() + errors.len());
+    for bot in bots {
+        let inspect = match container_ids.get(&bot.dir) {
+            Some(id) => match state.docker.inspect(id).await {
+                Ok(inspect) => (inspect, None),
+                Err(error) => (None, Some(format!("Docker inspect failed: {error}"))),
+            },
+            None => (None, None),
+        };
+        let snapshot = state.ops.snapshot(&bot.dir);
+        views.push(merge_bot_view(
+            &bot,
+            inspect.0.as_ref(),
+            inspect.1,
+            snapshot,
+        ));
+    }
+    for error in errors {
+        let snapshot = state.ops.snapshot(&error.dir);
+        views.push(error_card_view(&error, snapshot));
+    }
+    views.sort_by(|left, right| left.dir.cmp(&right.dir));
+
+    Ok(Json(json!({ "bots": views })))
+}
+
+async fn start_bot_route(
+    State(state): State<AppState>,
+    Path(dir): Path<String>,
+) -> Result<Response, ApiError> {
+    let target = resolve_target(&state.config.bots_dir, &dir, true)?;
+    let bot = target.bot.expect("a valid manifest was required");
+    ensure_docker(&state).await?;
+    let guard = begin_operation(&state, &dir, Some(phase_for(&bot)))?;
+
+    let docker = state.docker.clone();
+    tokio::spawn(async move {
+        let mut guard = guard;
+        let result = start_bot(&docker, &bot).await;
+        finish_operation(&mut guard, &dir, result);
+    });
+    Ok(accepted())
+}
+
+async fn stop_bot_route(
+    State(state): State<AppState>,
+    Path(dir): Path<String>,
+) -> Result<Response, ApiError> {
+    let target = resolve_target(&state.config.bots_dir, &dir, false)?;
+    ensure_docker(&state).await?;
+    let guard = begin_operation(&state, &dir, Some(BotPhase::Stopping))?;
+
+    let docker = state.docker.clone();
+    let name = container_name(&target.slug);
+    tokio::spawn(async move {
+        let mut guard = guard;
+        let result = stop_container(&docker, &name).await;
+        finish_operation(&mut guard, &dir, result);
+    });
+    Ok(accepted())
+}
+
+async fn set_autostart_route(
+    State(state): State<AppState>,
+    Path(dir): Path<String>,
+    payload: Result<Json<AutostartRequest>, JsonRejection>,
+) -> Result<Response, ApiError> {
+    let Json(AutostartRequest { enabled }) = payload.map_err(json_error)?;
+    let target = resolve_target(&state.config.bots_dir, &dir, enabled)?;
+    ensure_docker(&state).await?;
+
+    let slug = target.slug;
+    let bot = target.bot;
+    let phase = if enabled {
+        let name = container_name(&slug);
+        let exists = state
+            .docker
+            .inspect(&name)
+            .await
+            .map_err(map_docker_error)?
+            .is_some();
+        if exists {
+            None
+        } else {
+            Some(phase_for(
+                bot.as_ref()
+                    .expect("autostart on requires a valid manifest"),
+            ))
+        }
+    } else {
+        None
+    };
+    let guard = begin_operation(&state, &dir, phase)?;
+
+    let docker = state.docker.clone();
+    tokio::spawn(async move {
+        let mut guard = guard;
+        let result = if enabled {
+            match bot {
+                Some(bot) => set_autostart(&docker, &bot, true).await,
+                None => unreachable!("autostart on was resolved with a manifest"),
+            }
+        } else {
+            set_restart_policy(&docker, &container_name(&slug), false).await
+        };
+        finish_operation(&mut guard, &dir, result);
+    });
+    Ok(accepted())
+}
+
+fn resolve_target(
+    bots_dir: &StdPath,
+    dir: &str,
+    require_manifest: bool,
+) -> Result<MutationTarget, ApiError> {
+    let Discovery { bots, errors } = scan(bots_dir).map_err(|error| {
+        tracing::warn!(%error, "cannot scan the bots directory");
+        ApiError::bots_unavailable()
+    })?;
+
+    if let Some(bot) = bots.into_iter().find(|bot| bot.dir == dir) {
+        return Ok(MutationTarget {
+            slug: bot.slug.clone(),
+            bot: Some(bot),
+        });
+    }
+
+    if let Some(error) = errors.into_iter().find(|error| error.dir == dir) {
+        if require_manifest {
+            return Err(ApiError::new(
+                StatusCode::BAD_REQUEST,
+                "invalid_manifest",
+                error.message,
+            ));
+        }
+        let slug = slugify(dir)
+            .map_err(|_| ApiError::bad_request("the bot directory cannot be mapped to a slug"))?;
+        return Ok(MutationTarget { slug, bot: None });
+    }
+
+    Err(ApiError::not_found(
+        "the requested bot directory does not exist",
+    ))
+}
+
+async fn ensure_docker(state: &AppState) -> Result<(), ApiError> {
+    state.docker.ping().await.map_err(|error| {
+        tracing::warn!(%error, "Docker ping failed");
+        ApiError::docker_unavailable()
+    })
+}
+
+fn begin_operation(
+    state: &AppState,
+    dir: &str,
+    phase: Option<BotPhase>,
+) -> Result<OperationGuard, ApiError> {
+    state
+        .ops
+        .begin(dir, phase)
+        .ok_or_else(|| ApiError::conflict(format!("an operation is already running for {dir}")))
+}
+
+fn finish_operation(guard: &mut OperationGuard, dir: &str, result: Result<(), LifecycleError>) {
+    let error = result.err().map(|error| error.to_string());
+    if let Some(error) = &error {
+        tracing::warn!(bot = dir, %error, "bot operation failed");
+    }
+    guard.finish(error);
+}
+
+fn phase_for(bot: &ResolvedBot) -> BotPhase {
+    match bot.source {
+        BotSource::Dockerfile => BotPhase::Building,
+        BotSource::Image => BotPhase::Starting,
+    }
+}
+
+fn phase_status(phase: BotPhase) -> BotStatus {
+    match phase {
+        BotPhase::Building => BotStatus::Building,
+        BotPhase::Starting => BotStatus::Starting,
+        BotPhase::Stopping => BotStatus::Stopping,
+    }
+}
+
+fn map_docker_error(error: DockerError) -> ApiError {
+    match error {
+        DockerError::Unavailable => ApiError::docker_unavailable(),
+        error => ApiError::internal(format!("Docker error: {error}")),
+    }
+}
+
+fn json_error(rejection: JsonRejection) -> ApiError {
+    ApiError::new(rejection.status(), "bad_request", rejection.body_text())
+}
+
+fn merge_bot_view(
+    bot: &ResolvedBot,
+    inspect: Option<&ContainerInspectResponse>,
+    inspect_error: Option<String>,
+    snapshot: BotOpSnapshot,
+) -> BotView {
+    let container = inspect.map(from_inspect).unwrap_or(ContainerView {
+        status: BotStatus::Stopped,
+        health: None,
+        uptime_seconds: 0,
+        autostart: false,
+    });
+    let mut status = container.status;
+    let error = snapshot.error.clone().or(inspect_error);
+    if inspect.is_none() && error.is_some() && snapshot.phase.is_none() {
+        status = BotStatus::Error;
+    }
+    if let Some(phase) = snapshot.phase {
+        status = phase_status(phase);
+    }
+
+    BotView {
+        dir: bot.dir.clone(),
+        name: bot.name.clone(),
+        status,
+        health: container.health,
+        uptime_seconds: container.uptime_seconds,
+        autostart: container.autostart,
+        busy: snapshot.busy,
+        error,
+        image: Some(bot.image.clone()),
+        ports: bot.manifest.ports.clone(),
+        volumes: bot.manifest.volumes.clone(),
+    }
+}
+
+fn error_card_view(error: &BotErrorCard, snapshot: BotOpSnapshot) -> BotView {
+    BotView {
+        dir: error.dir.clone(),
+        name: error.dir.clone(),
+        status: BotStatus::Error,
+        health: None,
+        uptime_seconds: 0,
+        autostart: false,
+        busy: snapshot.busy,
+        error: Some(error.message.clone()),
+        image: None,
+        ports: Vec::new(),
+        volumes: Vec::new(),
+    }
+}
+
 async fn login(
     State(state): State<AppState>,
     payload: Result<Json<LoginRequest>, JsonRejection>,
 ) -> Result<Response, ApiError> {
-    let Json(LoginRequest { token }) = payload.map_err(|rejection| {
-        ApiError::new(rejection.status(), "bad_request", rejection.body_text())
-    })?;
+    let Json(LoginRequest { token }) = payload.map_err(json_error)?;
 
     if !state.auth.verify(&token) {
         return Err(ApiError::invalid_token());
@@ -69,6 +369,10 @@ async fn logout(State(state): State<AppState>) -> Response {
         response.headers_mut().insert(header::SET_COOKIE, cookie);
     }
     response
+}
+
+fn accepted() -> Response {
+    (StatusCode::ACCEPTED, Json(json!({ "ok": true }))).into_response()
 }
 
 async fn healthz(State(state): State<AppState>) -> Json<serde_json::Value> {
@@ -199,9 +503,11 @@ mod tests {
 
     fn state() -> (AppState, TempDir) {
         let temp = TempDir::new().unwrap();
+        let bots_dir = temp.path().join("bots");
+        std::fs::create_dir(&bots_dir).unwrap();
         let config = crate::config::Config {
             bind_addr: "127.0.0.1:0".parse().unwrap(),
-            bots_dir: temp.path().join("bots"),
+            bots_dir,
             data_dir: temp.path().join("data"),
             docker_socket: temp.path().join("docker.sock"),
             token_override: None,
@@ -215,6 +521,16 @@ mod tests {
             crate::auth::Auth::new("secret".to_string(), false),
         );
         (state, temp)
+    }
+
+    fn authed_request(method: Method, uri: &str, body: &str) -> Request<Body> {
+        Request::builder()
+            .method(method)
+            .uri(uri)
+            .header(header::CONTENT_TYPE, "application/json")
+            .header(header::COOKIE, "anqa_session=secret")
+            .body(Body::from(body.to_string()))
+            .unwrap()
     }
 
     async fn request(
@@ -407,5 +723,174 @@ mod tests {
         .await;
         assert_eq!(status, StatusCode::UNAUTHORIZED);
         assert_eq!(headers.get(header::CACHE_CONTROL).unwrap(), "no-store");
+    }
+
+    fn make_bot(temp: &TempDir) -> ResolvedBot {
+        let dir = temp.path().join("bots/echo");
+        std::fs::create_dir(&dir).unwrap();
+        std::fs::write(dir.join("Dockerfile"), "FROM alpine:3.22\n").unwrap();
+        std::fs::write(
+            dir.join("bot.toml"),
+            "ports = [\"8080:8080\"]\nvolumes = [\"data:/app/data\"]\n",
+        )
+        .unwrap();
+        crate::bots::load_bot(&temp.path().join("bots"), "echo").unwrap()
+    }
+
+    fn running_inspect() -> ContainerInspectResponse {
+        ContainerInspectResponse {
+            image: Some("sha256:image".to_string()),
+            state: Some(bollard::models::ContainerState {
+                status: Some(bollard::models::ContainerStateStatusEnum::RUNNING),
+                ..bollard::models::ContainerState::default()
+            }),
+            host_config: Some(bollard::models::HostConfig {
+                restart_policy: Some(bollard::models::RestartPolicy {
+                    name: Some(bollard::models::RestartPolicyNameEnum::NO),
+                    ..bollard::models::RestartPolicy::default()
+                }),
+                ..bollard::models::HostConfig::default()
+            }),
+            ..ContainerInspectResponse::default()
+        }
+    }
+
+    #[test]
+    fn bot_views_merge_container_status_and_operation_state() {
+        let (_state, temp) = state();
+        let bot = make_bot(&temp);
+        let inspect = running_inspect();
+
+        let running = merge_bot_view(&bot, Some(&inspect), None, BotOpSnapshot::default());
+        assert_eq!(running.status, BotStatus::Running);
+        assert_eq!(running.image.as_deref(), Some("anqa/echo:latest"));
+        assert_eq!(running.ports, vec!["8080:8080".to_string()]);
+        assert_eq!(running.volumes, vec!["data:/app/data".to_string()]);
+        let json = serde_json::to_value(&running).unwrap();
+        assert_eq!(json["image"], "anqa/echo:latest");
+        assert_eq!(json["status"], "running");
+        assert!(!running.busy);
+        assert!(running.error.is_none());
+
+        let busy = merge_bot_view(
+            &bot,
+            Some(&inspect),
+            None,
+            BotOpSnapshot {
+                busy: true,
+                phase: Some(BotPhase::Building),
+                error: Some("last failure".to_string()),
+            },
+        );
+        assert_eq!(busy.status, BotStatus::Building);
+        assert!(busy.busy);
+        assert_eq!(busy.error.as_deref(), Some("last failure"));
+        assert_eq!(busy.health, None);
+
+        let inspect_failed = merge_bot_view(
+            &bot,
+            None,
+            Some("Docker inspect failed".to_string()),
+            BotOpSnapshot::default(),
+        );
+        assert_eq!(inspect_failed.status, BotStatus::Error);
+        assert!(inspect_failed.error.is_some());
+        assert_eq!(inspect_failed.image.as_deref(), Some("anqa/echo:latest"));
+
+        let stopped = merge_bot_view(&bot, None, None, BotOpSnapshot::default());
+        assert_eq!(stopped.status, BotStatus::Stopped);
+        assert_eq!(stopped.image.as_deref(), Some("anqa/echo:latest"));
+    }
+
+    #[test]
+    fn error_cards_have_null_images_and_no_manifest_fields() {
+        let view = error_card_view(
+            &BotErrorCard {
+                dir: "bad-bot".to_string(),
+                message: "invalid manifest".to_string(),
+            },
+            BotOpSnapshot::default(),
+        );
+        let json = serde_json::to_value(&view).unwrap();
+        assert_eq!(json["dir"], "bad-bot");
+        assert_eq!(json["name"], "bad-bot");
+        assert_eq!(json["status"], "error");
+        assert_eq!(json["health"], serde_json::Value::Null);
+        assert_eq!(json["image"], serde_json::Value::Null);
+        assert_eq!(json["ports"], json!([]));
+        assert_eq!(json["volumes"], json!([]));
+        assert_eq!(json["busy"], false);
+        assert_eq!(json["error"], "invalid manifest");
+    }
+
+    #[test]
+    fn invalid_manifests_resolve_for_stop_but_not_for_start() {
+        let (_state, temp) = state();
+        let bots = temp.path().join("bots");
+        let bad = bots.join("bad");
+        std::fs::create_dir(&bad).unwrap();
+        std::fs::write(bad.join("bot.toml"), "wat = true\n").unwrap();
+
+        let target = resolve_target(&bots, "bad", false).unwrap();
+        assert_eq!(target.slug, "bad");
+        assert!(target.bot.is_none());
+
+        let error = resolve_target(&bots, "bad", true).err().unwrap();
+        let response = error.into_response();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[test]
+    fn unknown_directories_are_not_valid_targets() {
+        let (_state, temp) = state();
+        let bots = temp.path().join("bots");
+        let error = resolve_target(&bots, "missing", false).err().unwrap();
+        assert_eq!(error.into_response().status(), StatusCode::NOT_FOUND);
+    }
+
+    #[test]
+    fn a_busy_bot_reports_conflict() {
+        let (state, _temp) = state();
+        let guard = begin_operation(&state, "echo", Some(BotPhase::Starting)).unwrap();
+        let error = begin_operation(&state, "echo", None).err().unwrap();
+        assert_eq!(error.into_response().status(), StatusCode::CONFLICT);
+        drop(guard);
+        assert!(begin_operation(&state, "echo", None).is_ok());
+    }
+
+    #[tokio::test]
+    async fn accepted_mutations_have_the_documented_shape() {
+        let response = accepted();
+        assert_eq!(response.status(), StatusCode::ACCEPTED);
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        assert_eq!(body_json(&body), json!({ "ok": true }));
+    }
+
+    #[tokio::test]
+    async fn mutations_resolve_before_docker_and_reject_invalid_manifests() {
+        let (state, temp) = state();
+        let bad = temp.path().join("bots/bad");
+        std::fs::create_dir(&bad).unwrap();
+        std::fs::write(bad.join("bot.toml"), "wat = true\n").unwrap();
+        let app = router(state);
+
+        let (status, _, body) = request(
+            app.clone(),
+            authed_request(Method::POST, "/api/bots/bad/start", ""),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(body_json(&body)["error"]["code"], "invalid_manifest");
+
+        let (status, _, _) = request(
+            app.clone(),
+            authed_request(Method::POST, "/api/bots/missing/start", ""),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+
+        let (status, _, body) = request(app, authed_request(Method::GET, "/api/bots", "")).await;
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(body_json(&body)["error"]["code"], "docker_unavailable");
     }
 }

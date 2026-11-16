@@ -9,6 +9,8 @@ pub use slug::slugify;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
+use crate::docker::status::{BotStatus, HealthStatus};
+
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Manifest {
@@ -60,6 +62,21 @@ pub struct ResolvedBot {
     pub volumes: Vec<VolumeSpec>,
     pub config_hash: String,
     pub(crate) root: PathBuf,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct BotView {
+    pub dir: String,
+    pub name: String,
+    pub status: BotStatus,
+    pub health: Option<HealthStatus>,
+    pub uptime_seconds: u64,
+    pub autostart: bool,
+    pub busy: bool,
+    pub error: Option<String>,
+    pub image: Option<String>,
+    pub ports: Vec<String>,
+    pub volumes: Vec<String>,
 }
 
 #[derive(Debug, thiserror::Error)]
