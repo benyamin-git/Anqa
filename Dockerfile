@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 
-FROM rust:1.98.1-alpine3.22 AS builder
+FROM rust:1.100.0-alpine3.22 AS builder
 RUN apk add --no-cache build-base
 WORKDIR /src
 
