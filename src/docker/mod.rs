@@ -1,9 +1,14 @@
 pub mod build;
 pub mod context;
+pub mod lifecycle;
 pub mod status;
 
 pub use build::{BuildError, build_dockerfile, ensure_image, pull_image, split_image_ref};
 pub use context::{ContextError, build_context};
+pub use lifecycle::{
+    LifecycleError, container_name, set_autostart, set_restart_policy, start_bot, stop_bot,
+    stop_container, volume_name,
+};
 pub use status::{BotStatus, ContainerView, HealthStatus, from_inspect, uptime_seconds};
 
 use bollard::API_DEFAULT_VERSION;
