@@ -1,4 +1,4 @@
 #[test]
-fn version_is_0_1_1() {
-    assert_eq!(anqa::version(), "0.1.1");
+fn version_is_0_1_2() {
+    assert_eq!(anqa::version(), "0.1.2");
 }

@@ -1,6 +1,6 @@
 services:
   anqa:
-    image: ghcr.io/benyamin-git/anqa:v0.1.1
+    image: ghcr.io/benyamin-git/anqa:v0.1.2
     restart: unless-stopped
     init: true
     read_only: true

@@ -2,7 +2,7 @@
 
 Anqa is a Rust dashboard that manages Telegram bots as one Docker container per
 bot directory. Project root: `~/dev/anqa`. The binary and image are `anqa`;
-the public version is `v0.1.1`.
+the public version is `v0.1.2`.
 
 ## Commands
 
@@ -162,8 +162,8 @@ according to their own configuration; Anqa does not add resource limits.
 
 ## Screenshot
 
-`docs/screenshot.png` is a real capture of the dev Compose stack in the Light
-theme, using sample data: Demo Bot running, Echo Bot and Price Alerts stopped.
+`docs/screenshot.png` is a real capture of the dashboard in the Light theme,
+using sample data: Demo Bot running, Echo Bot and Price Alerts stopped.
 It was captured at 1440x320 after logging in and starting the sleeper demo bot.
 There is no committed screenshot script. To reproduce the setup, create demo
 directories under `dev-bots/`, run `docker compose -f compose.dev.yaml up -d

@@ -7,7 +7,7 @@ Anqa is a self-hosted dashboard for running Telegram bots as one Docker
 container per bot. Point it at a directory of bot projects, then start, stop,
 and autostart them from one page.
 
-> Early software (v0.1.1). The API and manifest format may change before 1.0.
+> Early software (v0.1.2). The API and manifest format may change before 1.0.
 
 > **Anqa controls Docker.** It talks directly to `/var/run/docker.sock`, which
 > is equivalent to root access on the host. Run it on a trusted network, put it
@@ -316,7 +316,7 @@ as securely as the token itself.
 - **Permission denied writing data** — set `ANQA_UID` and `ANQA_GID` to the
   owner of `data/`, or fix the directory ownership on the host.
 - **Build fails** — the error is on the bot card. Build the directory manually
-  with `docker build` to see the full log; Anqa v0.1.1 does not stream build
+  with `docker build` to see the full log; Anqa v0.1.2 does not stream build
   logs to the UI.
 - **Autostart did not run the bot** — press Start once after enabling
   autostart, and confirm the container policy with
@@ -328,7 +328,7 @@ as securely as the token itself.
 
 ## Known limitations
 
-Anqa v0.1.1 deliberately does not:
+Anqa v0.1.2 deliberately does not:
 
 - show or persist bot logs, or stream build logs in the browser;
 - create, edit, rename, or delete bot directories from the UI;
