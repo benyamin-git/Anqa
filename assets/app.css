@@ -603,6 +603,10 @@ a:hover {
   flex-wrap: wrap;
 }
 
+.bot-actions .switch {
+  margin-inline-start: auto;
+}
+
 /* Controls */
 
 .button {
