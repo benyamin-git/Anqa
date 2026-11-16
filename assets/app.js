@@ -766,6 +766,9 @@
     if (ui.logoutPending || !ui.auth) {
       return;
     }
+    if (els.settingsDialog && els.settingsDialog.open) {
+      els.settingsDialog.close();
+    }
     ui.logoutPending = true;
     els.logoutButton.disabled = true;
     try {

@@ -652,6 +652,22 @@ a:hover {
   background: var(--surface-container-high);
 }
 
+.button-icon {
+  inline-size: var(--control-height);
+  min-inline-size: var(--control-height);
+  padding-inline: 0;
+}
+
+.button-icon svg {
+  inline-size: 20px;
+  block-size: 20px;
+  flex: none;
+}
+
+.button-icon:active:not(:disabled) {
+  background: var(--surface-container-highest);
+}
+
 .button:disabled {
   opacity: 0.45;
 }
@@ -895,6 +911,30 @@ a:hover {
   font-size: var(--step-1);
 }
 
+.settings-session-row {
+  display: flex;
+  min-height: var(--control-height);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--outline-variant);
+  border-radius: var(--radius-chip);
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+.settings-session-row p {
+  min-width: 0;
+  margin: 0;
+  color: var(--on-surface-variant);
+  font-size: var(--step-1);
+}
+
+.settings-session-row .button {
+  margin-inline-start: auto;
+  flex: none;
+}
+
 .settings-actions {
   display: flex;
   justify-content: flex-end;
@@ -924,10 +964,6 @@ a:hover {
     text-overflow: ellipsis;
   }
 
-  .topbar-actions .button {
-    padding-inline: var(--space-2);
-  }
-
   .main {
     padding-inline: var(--space-4);
   }
@@ -952,17 +988,8 @@ a:hover {
     gap: var(--space-1);
   }
 
-  .topbar .wordmark,
-  .topbar-actions .button {
+  .topbar .wordmark {
     font-size: var(--step-1);
-  }
-
-  .topbar-actions {
-    gap: 0;
-  }
-
-  .topbar-actions .button {
-    padding-inline: var(--space-1);
   }
 }
 
@@ -972,6 +999,11 @@ a:hover {
   .switch,
   .settings-option {
     min-height: var(--touch-target);
+  }
+
+  .button-icon {
+    inline-size: var(--touch-target);
+    min-inline-size: var(--touch-target);
   }
 }
 

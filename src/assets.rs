@@ -41,6 +41,9 @@ mod tests {
         assert!(index.contains("id=\"login-error\""));
         assert!(index.contains("id=\"bot-grid\""));
         assert!(index.contains("id=\"settings-dialog\""));
+        assert!(index.contains("id=\"refresh-button\""));
+        assert!(index.contains("id=\"settings-button\""));
+        assert!(index.contains("id=\"logout-button\""));
         assert!(index.contains("id=\"banner\""));
         assert!(index.contains("id=\"banner-retry\""));
         assert!(index.contains("id=\"empty-state\""));
@@ -50,6 +53,23 @@ mod tests {
         for path in ["app.css", "theme.js", "app.js", "fonts/OFL.txt"] {
             assert!(file(path).is_some(), "missing embedded asset {path}");
         }
+    }
+
+    #[test]
+    fn topbar_actions_are_labelled_icons_and_logout_lives_in_settings() {
+        let index = text("index.html");
+        let topbar = index.split("</header>").next().unwrap_or_default();
+        assert!(topbar.contains("aria-label=\"Refresh bots\""));
+        assert!(topbar.contains("aria-label=\"Open settings\""));
+        assert!(topbar.contains("aria-haspopup=\"dialog\""));
+        assert!(topbar.contains("stroke=\"currentColor\""));
+        assert!(!topbar.contains("id=\"logout-button\""));
+
+        let settings = index
+            .split("id=\"settings-dialog\"")
+            .nth(1)
+            .unwrap_or_default();
+        assert!(settings.contains("id=\"logout-button\""));
     }
 
     #[test]
@@ -127,6 +147,8 @@ mod tests {
         assert!(css.contains("prefers-reduced-motion: reduce"));
         assert!(css.contains(".bot-heading"));
         assert!(css.contains(".status-chip {"));
+        assert!(css.contains(".button-icon {"));
+        assert!(css.contains(".settings-session-row {"));
     }
 
     #[test]
